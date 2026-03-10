@@ -1,0 +1,11 @@
+streamlit
+python-dotenv
+langgraph
+langchain-openai
+langchain-community
+tavily-python
+matplotlib
+pandas
+openai
+jupyter
+ipykernel

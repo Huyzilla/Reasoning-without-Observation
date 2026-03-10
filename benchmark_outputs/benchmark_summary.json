@@ -1,0 +1,26 @@
+{
+  "by_system": {
+    "ReAct": {
+      "total_time_sec": 193.725,
+      "avg_time_sec": 19.372,
+      "total_tokens": 18718,
+      "avg_tokens": 1871.8,
+      "total_llm_calls": 45,
+      "success_count": 10
+    },
+    "ReWOO": {
+      "total_time_sec": 133.993,
+      "avg_time_sec": 13.399,
+      "total_tokens": 6231,
+      "avg_tokens": 623.1,
+      "total_llm_calls": 21,
+      "success_count": 10
+    }
+  },
+  "savings": {
+    "token_saved": 12487.0,
+    "token_saved_pct": 66.71,
+    "time_saved_sec": 59.732,
+    "time_saved_pct": 30.83
+  }
+}
