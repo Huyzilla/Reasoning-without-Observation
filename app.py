@@ -12,10 +12,12 @@ from langgraph.checkpoint.memory import MemorySaver
 
 load_dotenv()
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
 model = ChatOpenAI(
     model="deepseek/deepseek-r1",
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
+    api_key=OPENROUTER_API_KEY,
     temperature=0
 ) 
 search = TavilySearchResults()
@@ -135,6 +137,22 @@ def _route(state):
         return "solve"
     return "tool"
 
+def format_runtime_error(exc: Exception) -> str:
+    message = str(exc)
+    lowered = message.lower()
+
+    if "401" in message or "authenticationerror" in lowered or "user not found" in lowered:
+        return (
+            "OpenRouter đang trả về lỗi 401. Kiểm tra lại biến môi trường "
+            "OPENROUTER_API_KEY trong file .env hoặc terminal hiện tại. "
+            "Key hiện tại có thể sai, hết hạn, hoặc không thuộc đúng tài khoản OpenRouter."
+        )
+
+    if "tavily" in lowered and ("api" in lowered or "auth" in lowered or "key" in lowered):
+        return "Tavily API lỗi. Kiểm tra lại TAVILY_API_KEY trong môi trường chạy Streamlit."
+
+    return f"Đã xảy ra lỗi khi chạy agent: {message}"
+
 # Build graph (stateless, không có checkpointer)
 graph = StateGraph(ReWOO)
 graph.add_node("plan", get_plan)
@@ -145,92 +163,261 @@ graph.add_edge("plan", "tool")
 graph.add_conditional_edges("tool", _route)
 graph.add_edge("solve", END)
 
-# UI 
+# ── UI CONFIG ──────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="ReWOO Agent", page_icon="🤖", layout="centered")
-st.title("🤖 ReWOO Agent")
-st.markdown("Hệ thống sẽ lập kế hoạch và xin phép bạn phê duyệt hoặc chỉnh sửa trước khi bắt đầu tìm kiếm.")
 
-# Lưu memory và app vào session_state để tồn tại qua mỗi lần rerun
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"] .main .block-container {
+    max-width: 760px;
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+}
+
+/* Nền tổng thể */
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    color: #e0e0e0;
+}
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stToolbar"] { right: 1rem; }
+
+/* Section wrapper */
+.panel {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    backdrop-filter: blur(8px);
+}
+
+/* Badge trạng thái */
+.badge-wait  { display:inline-block; background:#f59e0b22; color:#fbbf24;
+               border:1px solid #f59e0b55; border-radius:99px;
+               padding:4px 14px; font-size:0.82rem; font-weight:600; }
+.badge-done  { display:inline-block; background:#10b98122; color:#34d399;
+               border:1px solid #10b98155; border-radius:99px;
+               padding:4px 14px; font-size:0.82rem; font-weight:600; }
+
+/* Input */
+[data-testid="stTextInput"] input {
+    background: rgba(255,255,255,0.94) !important;
+    border: 1px solid rgba(255,255,255,0.30) !important;
+    border-radius: 10px !important;
+    color: #0f172a !important;
+    caret-color: #4f46e5 !important;
+    font-size: 1rem;
+    padding: 10px 14px !important;
+}
+[data-testid="stTextInput"] input::placeholder {
+    color: #64748b !important;
+    opacity: 1 !important;
+}
+
+/* Textarea */
+textarea {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+    border-radius: 10px !important;
+    color: #e0e0e0 !important;
+    font-family: 'Fira Code', monospace !important;
+    font-size: 0.88rem !important;
+}
+
+/* Buttons */
+[data-testid="stButton"] > button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    transition: all 0.2s ease !important;
+    border: none !important;
+}
+[data-testid="stButton"] > button:first-child {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6) !important;
+    color: white !important;
+}
+[data-testid="stButton"] > button:hover {
+    filter: brightness(1.15) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Evidence items */
+.evidence-item {
+    background: rgba(255,255,255,0.05);
+    border-left: 3px solid #6366f1;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    margin: 8px 0;
+    font-size: 0.88rem;
+    word-break: break-word;
+}
+.evidence-key {
+    color: #a78bfa;
+    font-weight: 700;
+    font-family: monospace;
+}
+
+/* Result box */
+.result-box {
+    background: rgba(16,185,129,0.1);
+    border: 1px solid rgba(16,185,129,0.35);
+    border-radius: 12px;
+    padding: 20px 24px;
+    font-size: 1.05rem;
+    line-height: 1.7;
+    color: #d1fae5;
+}
+
+/* Step pills */
+.step-pill {
+    display: inline-block;
+    background: rgba(99,102,241,0.2);
+    border: 1px solid rgba(99,102,241,0.4);
+    border-radius: 99px;
+    padding: 2px 12px;
+    font-size: 0.78rem;
+    color: #a5b4fc;
+    margin-right: 6px;
+}
+
+.section-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ── HEADER ─────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="text-align:center; padding: 12px 0 4px 0;">
+    <div style="font-size:3rem;">🤖</div>
+    <h1 style="font-size:2.2rem; font-weight:800; margin:0;
+               background: linear-gradient(90deg,#818cf8,#c084fc);
+               -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+        ReWOO Agent
+    </h1>
+    <p style="color:#94a3b8; margin-top:6px; font-size:0.95rem;">
+        Lập kế hoạch · Phê duyệt · Thực thi — Không cần quan sát lặp lại
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# ── SESSION STATE ──────────────────────────────────────────────────────────────
 if "memory" not in st.session_state:
     st.session_state.memory = MemorySaver()
 if "app" not in st.session_state:
     st.session_state.app = graph.compile(
-        checkpointer=st.session_state.memory, 
+        checkpointer=st.session_state.memory,
         interrupt_after=["plan"]
     )
-
-app = st.session_state.app
-
-# Khởi tạo thread_id để LangGraph nhớ ngữ cảnh phiên làm việc
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "rewoo_session_1"
+if "last_error" not in st.session_state:
+    st.session_state.last_error = ""
 
+app = st.session_state.app
 config = {"configurable": {"thread_id": st.session_state.thread_id}}
 
-# Nhận yêu cầu từ người dùng
-task = st.text_input("Nhập câu hỏi/nhiệm vụ của bạn:", placeholder="Ví dụ: Đội nào vô địch giải Ngoại hạng Anh năm 2023 và HLV của họ bao nhiêu tuổi?")
+# ── INPUT ──────────────────────────────────────────────────────────────────────
+st.markdown('<div class="section-title">📝 Nhập nhiệm vụ</div>', unsafe_allow_html=True)
+task = st.text_input(
+    "Nhập câu hỏi hoặc nhiệm vụ",
+    placeholder="Ví dụ: Đội nào vô địch Ngoại hạng Anh năm 2023 và HLV của họ bao nhiêu tuổi?",
+)
 
-if st.button("Lên Kế Hoạch 🚀"):
-    if task:
-        with st.spinner("DeepSeek đang suy nghĩ lộ trình..."):
-            app.invoke({"task": task}, config)
+btn_plan = st.button("Lên Kế Hoạch 🚀", use_container_width=True)
+
+if st.session_state.last_error:
+    st.error(st.session_state.last_error)
+
+if btn_plan:
+    if not OPENROUTER_API_KEY:
+        st.session_state.last_error = (
+            "Chưa tìm thấy OPENROUTER_API_KEY. Thêm key vào file .env hoặc môi trường chạy Streamlit."
+        )
+    elif task:
+        try:
+            st.session_state.last_error = ""
+            with st.spinner("🧠 DeepSeek đang phân tích và lập kế hoạch..."):
+                app.invoke({"task": task}, config)
+        except Exception as exc:
+            st.session_state.last_error = format_runtime_error(exc)
     else:
         st.warning("Vui lòng nhập câu hỏi!")
 
-# Lấy trạng thái hiện tại của đồ thị
+# ── STATE ──────────────────────────────────────────────────────────────────────
 current_state = app.get_state(config)
 
-# Xử lý Logic Hiển thị dựa trên State của Đồ thị
+# ── PENDING APPROVAL ───────────────────────────────────────────────────────────
 if current_state.next == ('tool',):
-    st.warning("⚠️ Hệ thống đang chờ bạn phê duyệt kế hoạch!")
-    
-    st.subheader("Kế hoạch được đề xuất:")
-    
-    # Xoá chuỗi <think>...</think>=
     raw_plan_string = current_state.values.get("plan_string", "")
     clean_plan_string = re.sub(r'<think>.*?</think>', '', raw_plan_string, flags=re.DOTALL).strip()
-    
-    # Cho phép người dùng chỉnh sửa trực tiếp text của kế hoạch
-    edited_plan_string = st.text_area(
-        "Bạn có thể sửa trực tiếp nội dung dưới đây, hoặc giữ nguyên và bấm Phê duyệt.", 
-        value=clean_plan_string, 
-        height=300
+
+    steps = current_state.values.get("steps", [])
+
+    st.markdown(
+        '<span class="badge-wait">⏳ Chờ phê duyệt</span>'
+        '<span style="font-size:1.15rem; font-weight:700; margin-left:12px;">Kế hoạch đề xuất</span>',
+        unsafe_allow_html=True,
     )
-    
-    col1, col2 = st.columns(2)
+    st.markdown("")
+
+    # Hiển thị các bước dạng pill summary
+    if steps:
+        pills = "".join(
+            f'<span class="step-pill">{s[1]} · {s[2]}</span>' for s in steps
+        )
+        st.markdown(f"<div style='margin-bottom:12px'>{pills}</div>", unsafe_allow_html=True)
+
+    edited_plan_string = st.text_area(
+        "Chỉnh sửa kế hoạch (tuỳ chọn) hoặc giữ nguyên và bấm Phê duyệt:",
+        value=clean_plan_string,
+        height=280,
+    )
+
+    col1, col2 = st.columns([3, 1])
     with col1:
-        if st.button("✅ Phê duyệt & Thực thi"):
-            # Cập nhật lại state với kế hoạch đã sửa (nếu có)
+        if st.button("✅ Phê duyệt & Thực thi", use_container_width=True):
             new_matches = re.findall(regex_pattern, edited_plan_string, re.DOTALL)
             app.update_state(config, {"plan_string": edited_plan_string, "steps": new_matches})
-                
-            with st.spinner("Đang thực thi các công cụ. Quá trình này có thể mất chút thời gian..."):
-                # Resume (Chạy tiếp) đồ thị bằng cách truyền `None` vào invoke
-                app.invoke(None, config)
-            st.rerun() # Tải lại trang để hiện kết quả
-
+            try:
+                st.session_state.last_error = ""
+                with st.spinner("⚙️ Đang thực thi các công cụ..."):
+                    app.invoke(None, config)
+            except Exception as exc:
+                st.session_state.last_error = format_runtime_error(exc)
+            st.rerun()
     with col2:
-        if st.button("❌ Huỷ bỏ"):
-            # Reset lại state bằng cách đổi thread_id
+        if st.button("❌ Huỷ", use_container_width=True):
             st.session_state.thread_id = st.session_state.thread_id + "_new"
+            st.session_state.last_error = ""
             st.rerun()
 
-# Nếu đồ thị đã hoàn thành (không có node tiếp theo và có kết quả)
+# ── RESULT ─────────────────────────────────────────────────────────────────────
 elif current_state.values.get("result"):
-    st.success("🎉 Nhiệm vụ đã hoàn thành!")
-    
-    with st.expander("Xem chi tiết quá trình thu thập bằng chứng (Evidence)"):
-        results_dict = current_state.values.get("results", {})
-        for key, val in results_dict.items():
-            st.markdown(f"**{key}**: {val}")
-            
-    st.subheader("💡 Kết luận cuối cùng:")
-    
-    # Làm sạch <think> của Solver (nếu có)
+    st.markdown(
+        '<span class="badge-done">✅ Hoàn thành</span>'
+        '<span style="font-size:1.15rem; font-weight:700; margin-left:12px;">Kết quả</span>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
+
     raw_result = current_state.values.get("result", "")
     clean_result = re.sub(r'<think>.*?</think>', '', raw_result, flags=re.DOTALL).strip()
-    st.info(clean_result)
-    
-    if st.button("Làm nhiệm vụ mới"):
+    st.markdown(f'<div class="result-box">{clean_result}</div>', unsafe_allow_html=True)
+
+    st.markdown("")
+    with st.expander("🔍 Chi tiết bằng chứng (Evidence)"):
+        results_dict = current_state.values.get("results", {})
+        for key, val in results_dict.items():
+            st.markdown(
+                f'<div class="evidence-item"><span class="evidence-key">{key}</span><br>{val}</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("")
+    if st.button("🔄 Làm nhiệm vụ mới", use_container_width=True):
         st.session_state.thread_id = st.session_state.thread_id + "_new"
+        st.session_state.last_error = ""
         st.rerun()
